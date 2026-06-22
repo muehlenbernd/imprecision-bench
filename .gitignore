@@ -1,0 +1,24 @@
+# HuggingFace credentials — never commit
+.env
+
+# Raw source data — never commit
+data_clean.csv
+images/
+
+# Built dataset (regenerable from source)
+imprecision_bench_dataset/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# macOS
+.DS_Store
+
+# Ephemeral task files
+TASK.md
