@@ -199,6 +199,37 @@ A Rational Speech Act (RSA) speaker model fit to this dataset achieves **r² ≈
 
 ---
 
+## Baseline Results
+
+Results from three vision-language models evaluated on the full dataset (n = 475), using `evaluate.py`. All numbers are from Task 1 (production task); Task 2 (motive elicitation) is not yet scored and open for contribution.
+
+### Finding 1 — Modality gap
+
+Models read textual clock descriptions far more accurately than clock images. Accuracy here means the response correctly conveys the target time (exact digit or equivalent word form, e.g. *"thirty-one"* for 8:31); range-stimulus rows are excluded.
+
+| Model | Image accuracy | Text accuracy |
+|-------|:-:|:-:|
+| GPT-4o mini | 3.6% | 19.9% |
+| Claude Haiku 4.5 | 0.3% | 44.8% |
+| Gemini 2.5 Flash | 18.3% | 39.1% |
+
+Even the best image reader (Gemini, 18.3%) falls well short of its own text-description accuracy (39.1%). Claude Haiku essentially fails to read clock images (0.3%) yet reads textual descriptions at 44.8%. **Open challenge:** reliable analog-clock reading for current VLMs.
+
+### Finding 2 — Pragmatic shift
+
+Humans reliably use more precise time expressions in the police context than in the casual neighbor context (cross-context Wasserstein distance WD = 0.27). Models show a much weaker shift or no shift at all, measured as the rate of digital-format responses (*"8:31"*) per context.
+
+| Model | Police | Neighbor | Δ | WD (image) | WD (text) |
+|-------|:-:|:-:|:-:|:-:|:-:|
+| GPT-4o mini | 0.4% | 4.5% | −4.1% | 0.04 | 0.01 |
+| Claude Haiku 4.5 | 15.6% | 1.2% | +14.4% | 0.14 | 0.19 |
+| Gemini 2.5 Flash | 30.7% | 21.7% | +9.0% | 0.09 | 0.12 |
+| **Human baseline** | — | — | — | **0.27** | — |
+
+GPT-4o mini inverts the expected direction (more digital in casual context). Claude Haiku and Gemini shift in the right direction but at roughly one-third to one-half the magnitude of the human effect. All model Wasserstein distances are well below the human baseline of 0.27. **Open challenge:** context-sensitive precision calibration at human magnitude.
+
+---
+
 ## Prompts
 
 ### Task 1 — Police context, precise stimulus
