@@ -226,7 +226,7 @@ def make_client(model: str):
         if not OPENAI_API_KEY:
             sys.exit("ERROR: OPENAI_API_KEY not set in .env")
         from openai import AsyncOpenAI
-        return AsyncOpenAI(api_key=OPENAI_API_KEY)
+        return AsyncOpenAI(api_key=OPENAI_API_KEY, max_retries=6)
     elif is_anthropic(model):
         if not ANTHROPIC_API_KEY:
             sys.exit("ERROR: ANTHROPIC_API_KEY not set in .env")
@@ -331,31 +331,33 @@ async def async_main(args) -> None:
     else:
         eval_indices = sample_one_per_condition(ds)
         mode = f"sample ({len(eval_indices)} rows, 1 per condition)"
-    print(f"Mode   : {mode}   |   {3 * len(eval_indices)} concurrent API calls\n")
+    print(f"Mode   : {mode}   |   {3 * len(eval_indices)} API calls (max 20 rows concurrent)\n")
 
-    # Fire all rows concurrently
+    sem = asyncio.Semaphore(10)  # cap at 10 rows (= 30 API calls) in flight at once
+
     async def process(n: int, idx: int) -> dict:
-        row    = ds[idx]
-        ctx    = context_names[row["context"]]
-        stim   = stimulus_names[row["stimulus_type"]]
-        labels = [motive_names[i] for i in row["motive_labels"]]
-        r_img, r_txt, r_t2 = await run_row(client, row, model)
-        print(f"  [{n:3d}/{len(eval_indices)}] {row['target_time']:8s} / {ctx:8s}"
-              f"  img={r_img!r:24s}  txt={r_txt!r:24s}  t2={str(r_t2)[:40]!r}")
-        return {
-            "item_id":               row["item_id"],
-            "target_time":           row["target_time"],
-            "context":               ctx,
-            "stimulus_type":         stim,
-            "signed_offset":         row["signed_offset"],
-            "human_production":      row["production"],
-            "human_production_code": row["production_code"],
-            "human_motive_labels":   "|".join(labels),
-            "human_motive_text":     row["motive_text"],
-            f"{col}_task1_image":    r_img,
-            f"{col}_task1_text":     r_txt,
-            f"{col}_task2":          r_t2,
-        }
+        async with sem:
+            row    = ds[idx]
+            ctx    = context_names[row["context"]]
+            stim   = stimulus_names[row["stimulus_type"]]
+            labels = [motive_names[i] for i in row["motive_labels"]]
+            r_img, r_txt, r_t2 = await run_row(client, row, model)
+            print(f"  [{n:3d}/{len(eval_indices)}] {row['target_time']:8s} / {ctx:8s}"
+                  f"  img={r_img!r:24s}  txt={r_txt!r:24s}  t2={str(r_t2)[:40]!r}")
+            return {
+                "item_id":               row["item_id"],
+                "target_time":           row["target_time"],
+                "context":               ctx,
+                "stimulus_type":         stim,
+                "signed_offset":         row["signed_offset"],
+                "human_production":      row["production"],
+                "human_production_code": row["production_code"],
+                "human_motive_labels":   "|".join(labels),
+                "human_motive_text":     row["motive_text"],
+                f"{col}_task1_image":    r_img,
+                f"{col}_task1_text":     r_txt,
+                f"{col}_task2":          r_t2,
+            }
 
     tasks   = [process(n, idx) for n, idx in enumerate(eval_indices, 1)]
     records = await asyncio.gather(*tasks)
