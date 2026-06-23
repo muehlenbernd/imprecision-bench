@@ -14,16 +14,21 @@ All API calls within a run are made concurrently (asyncio), so total runtime
 is roughly the latency of the single slowest call rather than the sum.
 
 Supported models (pass to --model):
-  OpenAI   : gpt-4o  (default)
-  Anthropic: claude-opus-4-5  (or any other claude-* vision model)
+  OpenAI      : gpt-4o (default), gpt-4o-mini
+  Anthropic   : claude-opus-4-5, claude-haiku-4-5  (or any claude-* vision model)
+  OpenRouter  : google/gemini-2.5-flash, qwen/qwen2.5-vl-7b-instruct
+                (any provider/model slug supported by openrouter.ai)
 
 Usage:
     python -m pip install -r requirements.txt
-    # Set OPENAI_API_KEY / ANTHROPIC_API_KEY in .env, then:
-    python evaluate.py                              # GPT-4o, 24-row sample
-    python evaluate.py --model claude-opus-4-5      # Claude, 24-row sample
-    python evaluate.py --full                       # all 475 rows
-    python evaluate.py --out PATH                   # custom output CSV
+    # Set API keys in .env (see .env.example), then:
+    python evaluate.py                                      # GPT-4o, 24-row sample
+    python evaluate.py --model claude-haiku-4-5             # Claude Haiku, 24-row sample
+    python evaluate.py --model google/gemini-2.5-flash      # Gemini via OpenRouter
+    python evaluate.py --model qwen/qwen2.5-vl-7b-instruct  # Qwen via OpenRouter
+    python evaluate.py --rows 50                            # first 50 rows
+    python evaluate.py --full                               # all 475 rows
+    python evaluate.py --out PATH                           # custom output CSV
 """
 
 import argparse
@@ -46,9 +51,11 @@ from scipy.stats import wasserstein_distance
 
 load_dotenv()
 
-HF_REPO_ID        = os.environ.get("HF_REPO_ID", "RolandM/imprecision-bench")
-OPENAI_API_KEY    = os.environ.get("OPENAI_API_KEY", "")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+HF_REPO_ID          = os.environ.get("HF_REPO_ID", "RolandM/imprecision-bench")
+OPENAI_API_KEY      = os.environ.get("OPENAI_API_KEY", "")
+ANTHROPIC_API_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
+OPENROUTER_API_KEY  = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 DEFAULT_MODEL = "gpt-4o"
 DEFAULT_OUT   = Path(__file__).parent / "results.csv"
@@ -66,12 +73,27 @@ TASK2_SYSTEM = (
 
 
 def col_prefix(model: str) -> str:
-    """'claude-opus-4-5' → 'claude_opus_4_5'"""
+    """'claude-opus-4-5' → 'claude_opus_4_5'; 'google/gemini-2.5-flash' → 'google_gemini_2_5_flash'"""
     return re.sub(r"[^a-zA-Z0-9]", "_", model)
 
 
 def is_openai(model: str) -> bool:
-    return not model.startswith("claude")
+    return model.startswith("gpt-") or model.startswith("o1") or model.startswith("o3")
+
+
+def is_anthropic(model: str) -> bool:
+    return model.startswith("claude")
+
+
+def is_openrouter(model: str) -> bool:
+    return "/" in model
+
+
+def _gemini_no_thinking(model: str) -> dict:
+    """Extra body params to disable thinking for Gemini models on OpenRouter."""
+    if model.startswith("google/gemini"):
+        return {"extra_body": {"thinking": {"type": "disabled"}}}
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -88,12 +110,13 @@ def pil_to_b64(pil_image) -> str:
 # Async OpenAI calls
 # ---------------------------------------------------------------------------
 
-async def openai_call(client, messages: list, model: str, max_tokens: int) -> str:
+async def openai_call(client, messages: list, model: str, max_tokens: int, extra_body: dict | None = None) -> str:
     resp = await client.chat.completions.create(
         model=model,
         max_tokens=max_tokens,
         temperature=0,
         messages=messages,
+        **({"extra_body": extra_body} if extra_body else {}),
     )
     return resp.choices[0].message.content.strip()
 
@@ -106,21 +129,21 @@ async def openai_task1_image(client, row: dict, model: str) -> str:
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
             {"type": "text", "text": row["prompt"]},
         ]},
-    ], model, max_tokens=40)
+    ], model, max_tokens=40, **_gemini_no_thinking(model))
 
 
 async def openai_task1_text(client, row: dict, model: str) -> str:
     return await openai_call(client, [
         {"role": "system", "content": TASK1_SYSTEM},
         {"role": "user", "content": row["clock_description"] + "\n\n" + row["prompt"]},
-    ], model, max_tokens=40)
+    ], model, max_tokens=40, **_gemini_no_thinking(model))
 
 
 async def openai_task2(client, row: dict, model: str) -> str:
     return await openai_call(client, [
         {"role": "system", "content": TASK2_SYSTEM},
         {"role": "user", "content": row["prompt_motive"]},
-    ], model, max_tokens=150)
+    ], model, max_tokens=150, **_gemini_no_thinking(model))
 
 
 # ---------------------------------------------------------------------------
@@ -167,17 +190,17 @@ async def anthropic_task2(client, row: dict, model: str) -> str:
 
 async def run_row(client, row: dict, model: str) -> tuple[str, str, str]:
     """Run all three tasks for one row concurrently; return (img, txt, t2)."""
-    if is_openai(model):
-        return await asyncio.gather(
-            openai_task1_image(client, row, model),
-            openai_task1_text(client, row, model),
-            openai_task2(client, row, model),
-        )
-    else:
+    if is_anthropic(model):
         return await asyncio.gather(
             anthropic_task1_image(client, row, model),
             anthropic_task1_text(client, row, model),
             anthropic_task2(client, row, model),
+        )
+    else:  # OpenAI or OpenRouter (OpenAI-compatible)
+        return await asyncio.gather(
+            openai_task1_image(client, row, model),
+            openai_task1_text(client, row, model),
+            openai_task2(client, row, model),
         )
 
 
@@ -187,11 +210,18 @@ def make_client(model: str):
             sys.exit("ERROR: OPENAI_API_KEY not set in .env")
         from openai import AsyncOpenAI
         return AsyncOpenAI(api_key=OPENAI_API_KEY)
-    else:
+    elif is_anthropic(model):
         if not ANTHROPIC_API_KEY:
             sys.exit("ERROR: ANTHROPIC_API_KEY not set in .env")
         import anthropic
         return anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+    elif is_openrouter(model):
+        if not OPENROUTER_API_KEY:
+            sys.exit("ERROR: OPENROUTER_API_KEY not set in .env")
+        from openai import AsyncOpenAI
+        return AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+    else:
+        sys.exit(f"ERROR: Unknown model '{model}'. Use gpt-*, claude-*, or provider/model for OpenRouter.")
 
 
 # ---------------------------------------------------------------------------
@@ -270,8 +300,15 @@ async def async_main(args) -> None:
     full_df["context_str"]       = full_df["context"].map(lambda x: context_names[x])
     full_df["stimulus_type_str"] = full_df["stimulus_type"].map(lambda x: stimulus_names[x])
 
-    eval_indices = list(range(len(ds))) if args.full else sample_one_per_condition(ds)
-    mode = "full dataset" if args.full else f"sample ({len(eval_indices)} rows, 1 per condition)"
+    if args.full:
+        eval_indices = list(range(len(ds)))
+        mode = "full dataset"
+    elif args.rows is not None:
+        eval_indices = list(range(min(args.rows, len(ds))))
+        mode = f"first {len(eval_indices)} rows"
+    else:
+        eval_indices = sample_one_per_condition(ds)
+        mode = f"sample ({len(eval_indices)} rows, 1 per condition)"
     print(f"Mode   : {mode}   |   {3 * len(eval_indices)} concurrent API calls\n")
 
     # Fire all rows concurrently
@@ -319,6 +356,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate a VLM on imprecision-bench.")
     parser.add_argument("--model", default=DEFAULT_MODEL,
                         help="Model slug, e.g. gpt-4o or claude-opus-4-5 (default: gpt-4o)")
+    parser.add_argument("--rows", type=int, default=None, help="Evaluate first N rows.")
     parser.add_argument("--full", action="store_true", help="Evaluate all 475 rows.")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="Output CSV path.")
     args = parser.parse_args()
