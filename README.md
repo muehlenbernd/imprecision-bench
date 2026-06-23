@@ -33,6 +33,18 @@ Roland Mühlenbernd, Stephanie Solt
 
 ---
 
+## Notebook
+
+**`notebook.ipynb`** — guided walkthrough: data loading, sample evaluation (1 row per condition), clock-reading accuracy, pragmatic shift analysis, and Wasserstein distance against the human baseline.
+
+| | |
+|---|---|
+| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/muehlenbernd/imprecision-bench/blob/main/notebook.ipynb) | Interactive (Google account required) |
+| [![Launch Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/muehlenbernd/imprecision-bench/main?filepath=notebook.ipynb) | Interactive (no account needed; slower start) |
+| [![View on GitHub](https://img.shields.io/badge/view-on%20GitHub-lightgrey?logo=github)](https://github.com/muehlenbernd/imprecision-bench/blob/main/notebook.ipynb) | Read-only rendered view |
+
+---
+
 ## Overview
 
 When a witness tells a police officer "It happened at 8:31" rather than "It happened around 8:30," the choice of precision level is not arbitrary — it reflects the interlocutor's needs, the communicative context, and the speaker's pragmatic judgment. This benchmark tests whether large language models and vision-language models make the same kind of context-sensitive precision adjustments that humans do.
