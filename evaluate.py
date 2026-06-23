@@ -16,19 +16,21 @@ is roughly the latency of the single slowest call rather than the sum.
 Supported models (pass to --model):
   OpenAI      : gpt-4o (default), gpt-4o-mini
   Anthropic   : claude-opus-4-5, claude-haiku-4-5  (or any claude-* vision model)
-  OpenRouter  : google/gemini-2.5-flash, qwen/qwen2.5-vl-7b-instruct
+  OpenRouter  : google/gemini-2.5-flash
                 (any provider/model slug supported by openrouter.ai)
+  Together.ai : together/meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo
+                (prefix any Together.ai model slug with "together/")
 
 Usage:
     python -m pip install -r requirements.txt
     # Set API keys in .env (see .env.example), then:
-    python evaluate.py                                      # GPT-4o, 24-row sample
-    python evaluate.py --model claude-haiku-4-5             # Claude Haiku, 24-row sample
-    python evaluate.py --model google/gemini-2.5-flash      # Gemini via OpenRouter
-    python evaluate.py --model qwen/qwen2.5-vl-7b-instruct  # Qwen via OpenRouter
-    python evaluate.py --rows 50                            # first 50 rows
-    python evaluate.py --full                               # all 475 rows
-    python evaluate.py --out PATH                           # custom output CSV
+    python evaluate.py                                                          # GPT-4o, 24-row sample
+    python evaluate.py --model claude-haiku-4-5                                 # Claude Haiku
+    python evaluate.py --model google/gemini-2.5-flash                          # Gemini via OpenRouter
+    python evaluate.py --model together/meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo  # LLaMA via Together
+    python evaluate.py --rows 50                                                # first 50 rows
+    python evaluate.py --full                                                   # all 475 rows
+    python evaluate.py --out PATH                                               # custom output CSV
 """
 
 import argparse
@@ -56,6 +58,8 @@ OPENAI_API_KEY      = os.environ.get("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
 OPENROUTER_API_KEY  = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+TOGETHER_API_KEY    = os.environ.get("TOGETHER_API_KEY", "")
+TOGETHER_BASE_URL   = "https://api.together.xyz/v1"
 
 DEFAULT_MODEL = "gpt-4o"
 DEFAULT_OUT   = Path(__file__).parent / "results.csv"
@@ -86,14 +90,27 @@ def is_anthropic(model: str) -> bool:
 
 
 def is_openrouter(model: str) -> bool:
-    return "/" in model
+    return "/" in model and not model.startswith("together/")
 
 
-def _gemini_no_thinking(model: str) -> dict:
-    """Extra body params to disable thinking for Gemini models on OpenRouter."""
+def is_together(model: str) -> bool:
+    return model.startswith("together/")
+
+
+def _no_thinking(model: str) -> dict:
+    """Disable thinking/reasoning tokens via extra_body."""
     if model.startswith("google/gemini"):
         return {"extra_body": {"thinking": {"type": "disabled"}}}
+    if "qwen3" in model:
+        return {"extra_body": {"enable_thinking": False}}
     return {}
+
+
+def _api_model(model: str) -> str:
+    """Resolve model ID for the API call — strips the 'together/' routing prefix."""
+    if model.startswith("together/"):
+        return model[len("together/"):]
+    return model
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +129,7 @@ def pil_to_b64(pil_image) -> str:
 
 async def openai_call(client, messages: list, model: str, max_tokens: int, extra_body: dict | None = None) -> str:
     resp = await client.chat.completions.create(
-        model=model,
+        model=_api_model(model),
         max_tokens=max_tokens,
         temperature=0,
         messages=messages,
@@ -129,21 +146,21 @@ async def openai_task1_image(client, row: dict, model: str) -> str:
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
             {"type": "text", "text": row["prompt"]},
         ]},
-    ], model, max_tokens=40, **_gemini_no_thinking(model))
+    ], model, max_tokens=40, **_no_thinking(model))
 
 
 async def openai_task1_text(client, row: dict, model: str) -> str:
     return await openai_call(client, [
         {"role": "system", "content": TASK1_SYSTEM},
         {"role": "user", "content": row["clock_description"] + "\n\n" + row["prompt"]},
-    ], model, max_tokens=40, **_gemini_no_thinking(model))
+    ], model, max_tokens=40, **_no_thinking(model))
 
 
 async def openai_task2(client, row: dict, model: str) -> str:
     return await openai_call(client, [
         {"role": "system", "content": TASK2_SYSTEM},
         {"role": "user", "content": row["prompt_motive"]},
-    ], model, max_tokens=150, **_gemini_no_thinking(model))
+    ], model, max_tokens=150, **_no_thinking(model))
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +237,13 @@ def make_client(model: str):
             sys.exit("ERROR: OPENROUTER_API_KEY not set in .env")
         from openai import AsyncOpenAI
         return AsyncOpenAI(api_key=OPENROUTER_API_KEY, base_url=OPENROUTER_BASE_URL)
+    elif is_together(model):
+        if not TOGETHER_API_KEY:
+            sys.exit("ERROR: TOGETHER_API_KEY not set in .env")
+        from openai import AsyncOpenAI
+        return AsyncOpenAI(api_key=TOGETHER_API_KEY, base_url=TOGETHER_BASE_URL)
     else:
-        sys.exit(f"ERROR: Unknown model '{model}'. Use gpt-*, claude-*, or provider/model for OpenRouter.")
+        sys.exit(f"ERROR: Unknown model '{model}'. Use gpt-*, claude-*, provider/model (OpenRouter), or together/model.")
 
 
 # ---------------------------------------------------------------------------
@@ -339,14 +361,19 @@ async def async_main(args) -> None:
     records = await asyncio.gather(*tasks)
     results_df = pd.DataFrame(records)
 
-    # Merge into existing CSV (join on item_id only)
+    # Merge into existing CSV, preserving metadata and all other model columns.
+    # combine_first: results_df wins where non-NaN (new model cols + metadata for new rows);
+    # existing fills in where results_df has NaN (old model cols for all rows).
     if args.out.exists():
         existing = pd.read_csv(args.out)
         existing["item_id"]   = existing["item_id"].astype(str)
         results_df["item_id"] = results_df["item_id"].astype(str)
-        new_cols = [c for c in results_df.columns if c.startswith(col)]
         existing = existing.drop(columns=[c for c in existing.columns if c.startswith(col)], errors="ignore")
-        results_df = existing.merge(results_df[["item_id"] + new_cols], on="item_id", how="outer")
+        results_df = (
+            results_df.set_index("item_id")
+            .combine_first(existing.set_index("item_id"))
+            .reset_index()
+        )
 
     results_df.to_csv(args.out, index=False)
     summarise(results_df, full_df, model, args.out)
