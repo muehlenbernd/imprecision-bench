@@ -203,9 +203,11 @@ A Rational Speech Act (RSA) speaker model fit to this dataset achieves **r² ≈
 
 Results from three vision-language models evaluated on the full dataset (n = 475), using `evaluate.py`. All numbers are from Task 1 (production task); Task 2 (motive elicitation) is not yet scored and open for contribution.
 
+Each response is classified as **precise** (conveys the exact target time), **rounded** (conveys a canonical approximation — 8:25, 8:30, or 8:35 — but not the exact time), or **other** (wrong, vague, or non-answer). The same classifier is applied to human productions for a direct apples-to-apples comparison.
+
 ### Finding 1 — Modality gap
 
-Models read textual clock descriptions far more accurately than clock images. Accuracy here means the response correctly conveys the target time (exact digit or equivalent word form, e.g. *"thirty-one"* for 8:31); range-stimulus rows are excluded.
+Models read textual clock descriptions far more accurately than clock images. Accuracy = fraction of responses classified as *precise* (correct target time conveyed).
 
 | Model | Image accuracy | Text accuracy |
 |-------|:-:|:-:|
@@ -213,20 +215,22 @@ Models read textual clock descriptions far more accurately than clock images. Ac
 | Claude Haiku 4.5 | 0.3% | 44.8% |
 | Gemini 2.5 Flash | 18.3% | 39.1% |
 
-Even the best image reader (Gemini, 18.3%) falls well short of its own text-description accuracy (39.1%). Claude Haiku essentially fails to read clock images (0.3%) yet reads textual descriptions at 44.8%. **Open challenge:** reliable analog-clock reading for current VLMs.
+Claude Haiku essentially fails to read clock images (0.3%) yet reads textual descriptions at 44.8%. Gemini is notably better on images but still well below its own text performance. **Open challenge:** reliable analog-clock reading for current VLMs.
 
 ### Finding 2 — Pragmatic shift
 
-Humans reliably use more precise time expressions in the police context than in the casual neighbor context (cross-context Wasserstein distance WD = 0.27). Models show a much weaker shift or no shift at all, measured as the rate of digital-format responses (*"8:31"*) per context.
+Humans produce more precise time expressions in the formal police context than in the casual neighbor context. Do models replicate this shift? (Text task, n = 475.)
 
-| Model | Police | Neighbor | Δ | WD (image) | WD (text) |
-|-------|:-:|:-:|:-:|:-:|:-:|
-| GPT-4o mini | 0.4% | 4.5% | −4.1% | 0.04 | 0.01 |
-| Claude Haiku 4.5 | 15.6% | 1.2% | +14.4% | 0.14 | 0.19 |
-| Gemini 2.5 Flash | 30.7% | 21.7% | +9.0% | 0.09 | 0.12 |
-| **Human baseline** | — | — | — | **0.27** | — |
+| Source | Police precise | Neighbor precise | Δ precise | WD |
+|--------|:-:|:-:|:-:|:-:|
+| GPT-4o mini | 56.7% | 60.7% | −3.9% | 0.068 |
+| Claude Haiku 4.5 | 60.6% | 60.7% | 0.0% | 0.001 |
+| Gemini 2.5 Flash | 68.4% | 67.2% | +1.2% | 0.031 |
+| **Human baseline** | **79.2%** | **71.3%** | **+7.9%** | **0.098** |
 
-GPT-4o mini inverts the expected direction (more digital in casual context). Claude Haiku and Gemini shift in the right direction but at roughly one-third to one-half the magnitude of the human effect. All model Wasserstein distances are well below the human baseline of 0.27. **Open challenge:** context-sensitive precision calibration at human magnitude.
+WD = Wasserstein distance between police and neighbor distributions (3-way coding: 0=precise, 1=rounded, 2=other). Higher = more context-sensitive.
+
+All models show near-zero pragmatic shift. GPT-4o mini is actually *less* precise in the police context (inverted direction). The "other" category (wrong time, vague, or non-answer) reaches 25–39% for all models on the text task — a further sign that even basic time production is unreliable. **Open challenge:** context-sensitive precision calibration at human magnitude.
 
 ---
 
