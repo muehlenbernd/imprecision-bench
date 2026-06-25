@@ -207,30 +207,45 @@ Each response is classified as **precise** (conveys the exact target time), **ro
 
 ### Finding 1 — Modality gap
 
-Models read textual clock descriptions far more accurately than clock images. Accuracy = fraction of responses classified as *precise* (correct target time conveyed).
+Models read textual clock descriptions far more accurately than clock images. Accuracy = fraction of responses where the exact target time is conveyed.
 
 | Model | Image accuracy | Text accuracy |
 |-------|:-:|:-:|
-| GPT-4o mini | 3.6% | 19.9% |
-| Claude Haiku 4.5 | 0.3% | 44.8% |
-| Gemini 2.5 Flash | 18.3% | 39.1% |
+| GPT-4o mini | 2.7% | 35.8% |
+| Claude Haiku 4.5 | 0.2% | 38.1% |
+| Gemini 2.5 Flash | 26.9% | 54.3% |
 
-Claude Haiku essentially fails to read clock images (0.3%) yet reads textual descriptions at 44.8%. Gemini is notably better on images but still well below its own text performance. **Open challenge:** reliable analog-clock reading for current VLMs.
+GPT-4o mini and Claude Haiku essentially fail to read clock images (≤3%), yet manage 35–38% on textual descriptions. Gemini is substantially better on the image task but still well below its own text performance. **Open challenge:** reliable analog-clock reading for current VLMs.
 
 ### Finding 2 — Pragmatic shift
 
 Humans produce more precise time expressions in the formal police context than in the casual neighbor context. Do models replicate this shift? (Text task, n = 475.)
 
-| Source | Police precise | Neighbor precise | Δ precise | WD |
-|--------|:-:|:-:|:-:|:-:|
-| GPT-4o mini | 56.7% | 60.7% | −3.9% | 0.068 |
-| Claude Haiku 4.5 | 60.6% | 60.7% | 0.0% | 0.001 |
-| Gemini 2.5 Flash | 68.4% | 67.2% | +1.2% | 0.031 |
-| **Human baseline** | **79.2%** | **71.3%** | **+7.9%** | **0.098** |
+"Δ cond" is the conditional shift — precise rate within responses that are either precise *or* rounded (i.e., excluding misreadings). This is the cleaner signal: it asks whether a model that *can* produce a time expression at all adjusts its precision level to context.
+
+| Source | Police precise | Neighbor precise | Δ precise | Δ cond | WD |
+|--------|:-:|:-:|:-:|:-:|:-:|
+| GPT-4o mini | 32.5% | 38.9% | −6.5% | −5.3% | 0.120 |
+| Claude Haiku 4.5 | 31.2% | 37.7% | −6.5% | −10.7% | 0.066 |
+| Gemini 2.5 Flash | 55.0% | 53.7% | +1.3% | +4.7% | 0.044 |
+| **Human baseline** | **62.3%** | **53.3%** | **+9.1%** | **+9.9%** | **0.097** |
 
 WD = Wasserstein distance between police and neighbor distributions (3-way coding: 0=precise, 1=rounded, 2=other). Higher = more context-sensitive.
 
-All models show near-zero pragmatic shift. GPT-4o mini is actually *less* precise in the police context (inverted direction). The "other" category (wrong time, vague, or non-answer) reaches 25–39% for all models on the text task — a further sign that even basic time production is unreliable. **Open challenge:** context-sensitive precision calibration at human magnitude.
+GPT-4o mini and Claude Haiku show an **inverted** shift — they are *less* precise in the formal police context. Gemini moves in the right direction but at less than half the human magnitude. **Open challenge:** context-sensitive precision calibration at human magnitude.
+
+### Finding 3 — Off-round subset
+
+Restricting to targets where rounding vs. precision is unambiguous (8:26–8:29, 8:31–8:34, n = 244) — the methodology of Mühlenbernd & Solt (2022) — the human rounding signal strengthens considerably. Δ cond = conditional precise shift (police − neighbor); p-value from one-tailed Mann-Whitney U (H₁: neighbor rounds more).
+
+| Source | Police prec/rnd | Neighbor prec/rnd | Δ cond | p |
+|--------|:-:|:-:|:-:|:-:|
+| GPT-4o mini | 24.3% / 0.9% | 30.2% / 4.7% | +9.9% | 0.039 * |
+| Claude Haiku 4.5 | 21.7% / 0.0% | 26.4% / 0.0% | 0.0% | 1.000 |
+| Gemini 2.5 Flash | 51.3% / 0.0% | 50.4% / 8.5% | +14.5% | 0.001 *** |
+| **Human baseline** | **70.4% / 23.5%** | **51.2% / 43.4%** | **+20.9%** | **0.001 ***** |
+
+Gemini replicates the human direction significantly (p = 0.001). GPT-4o mini shows a weak but significant effect (p = 0.039). Claude Haiku produces zero rounding responses on off-round targets in both contexts — it defaults to "other" (wrong or vague times), making pragmatic shift detection impossible.
 
 ---
 
