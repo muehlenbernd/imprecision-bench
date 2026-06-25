@@ -217,7 +217,20 @@ Models read textual clock descriptions far more accurately than clock images. Ac
 
 GPT-4o mini and Claude Haiku essentially fail to read clock images (≤3%), yet manage 35–38% on textual descriptions. Gemini is substantially better on the image task but still well below its own text performance. **Open challenge:** reliable analog-clock reading for current VLMs.
 
-### Finding 2 — Pragmatic shift
+### Finding 2 — Under-rounding
+
+On off-round targets (8:26–8:34), models almost never choose to round to a canonical approximation, whereas humans do so frequently. Human-style rounding means saying "8:30" for a target of 8:28 — deliberately trading precision for simplicity. This is distinct from hedging language on an exact time (e.g., "around 8:30" when the target *is* 8:30).
+
+| Source | Police rounding | Neighbor rounding |
+|--------|:-:|:-:|
+| GPT-4o mini | 0.9% | 4.7% |
+| Claude Haiku 4.5 | 0.0% | 0.0% |
+| Gemini 2.5 Flash | 0.0% | 8.5% |
+| **Human baseline** | **23.5%** | **43.4%** |
+
+Models round at 5–25× lower rates than humans on off-round targets. Claude Haiku never rounds at all. Gemini is the closest to human-like: it does produce rounded responses in the neighbor context, though still far below the human rate. This under-rounding means models operate in a fundamentally different region of the precision-rounding space than humans do — they default to precision (or produce misreadings) where humans routinely choose approximation. **Open challenge:** models that use canonical approximations as a natural production strategy, not just as a fallback.
+
+### Finding 3 — Pragmatic shift
 
 Humans produce more precise time expressions in the formal police context than in the casual neighbor context. Do models replicate this shift? (Text task, n = 475.)
 
@@ -234,7 +247,7 @@ WD = Wasserstein distance between police and neighbor distributions (3-way codin
 
 GPT-4o mini and Claude Haiku show an **inverted** shift — they are *less* precise in the formal police context. Gemini moves in the right direction but at less than half the human magnitude. **Open challenge:** context-sensitive precision calibration at human magnitude.
 
-### Finding 3 — Off-round subset
+### Finding 4 — Off-round subset
 
 Restricting to targets where rounding vs. precision is unambiguous (8:26–8:29, 8:31–8:34, n = 244) — the methodology of Mühlenbernd & Solt (2022) — the human rounding signal strengthens considerably. Δ cond = conditional precise shift (police − neighbor); p-value from one-tailed Mann-Whitney U (H₁: neighbor rounds more).
 
