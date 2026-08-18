@@ -118,7 +118,8 @@ Each row represents one human production. Key columns:
 | `motive_labels` | Sequence(ClassLabel) | Multi-label motive annotation (12 categories) |
 | `motive_text` | string | Free-text motive explanation from follow-up task |
 | `clock_image` | Image | PNG clock image (432 × 429 px) |
-| `clock_description` | string | Textual clock description (with `Clock description:` tag) |
+| `clock_description` | string | Textual clock description — finger-position format (added for LLM evaluation; not part of the original experiment) |
+| `clock_description_minutemark` | string | Textual clock description — minute-mark format (added for LLM fine-tuning; see below) |
 | `prompt` | string | Task 1 scenario text (unified across modalities) |
 | `prompt_motive` | string | Task 2 context-embedded motive elicitation prompt |
 
@@ -129,6 +130,16 @@ Each row represents one human production. Key columns:
 ### Approximator values
 
 `none`, `around`, `about`, `just before/after`, `approximately`, `ish`, `nearly`, `roughly`, `round about`
+
+### Clock description formats
+
+The dataset includes two textual representations of the clock stimulus, both stored as strings that can be prepended to the task prompt:
+
+**Important:** the original human experiment used **clock images** as stimuli — participants never saw textual descriptions. Both `clock_description` columns were added to the dataset specifically for LLM evaluation, to provide text-based alternatives for models that struggle with analog clock reading.
+
+**`clock_description`** — a finger-position format added for LLM text evaluation (e.g. *"Clock description: Hour hand between 8 and 9. Minute hand one minute-mark past the 5."*). This format describes the clock state qualitatively but does not state the exact minute explicitly, which can cause systematic misreadings in open-weight LLMs (14–48% accuracy in pilot studies).
+
+**`clock_description_minutemark`** — a redesigned format that states the exact minute value explicitly (e.g. *"Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 26-minute mark."*). This format was developed to eliminate comprehension failures: it achieves 100% accuracy across tested open-weight models (Llama 3.1 8B, Qwen 2.5 7B, Gemma 3 4B). The hour-hand description is deliberately uniform across all target times to avoid giving additional positional cues. Because this format makes the exact minute unambiguous, any rounding observed in model outputs is a pure pragmatic choice — rounding despite an explicit minute value is a stronger behavioural signal than rounding from an ambiguous description.
 
 ---
 
@@ -205,6 +216,10 @@ Results from three vision-language models evaluated on the full dataset (n = 475
 
 Each response is classified as **precise** (conveys the exact target time), **rounded** (conveys a canonical approximation — 8:25, 8:30, or 8:35 — but not the exact time), or **other** (wrong, vague, or non-answer). The same classifier is applied to human productions for a direct apples-to-apples comparison.
 
+### The comprehension confound
+
+Both the image task and the finger-position text task create systematic comprehension failures that confound pragmatic shift analysis. A model producing a wrong time ("other") is not making a pragmatic choice — it has simply misread the clock. The minute-mark results below should be read as the primary pragmatic test; the image and finger-position text results characterise how comprehension failures mask that capacity.
+
 ### Finding 1 — Modality gap
 
 Models read textual clock descriptions far more accurately than clock images. Accuracy = fraction of responses where the exact target time is conveyed.
@@ -215,50 +230,53 @@ Models read textual clock descriptions far more accurately than clock images. Ac
 | Claude Haiku 4.5 | 0.2% | 38.1% |
 | Gemini 2.5 Flash | 26.9% | 54.3% |
 
-GPT-4o mini and Claude Haiku essentially fail to read clock images (≤3%), yet manage 35–38% on textual descriptions. Gemini is substantially better on the image task but still well below its own text performance. **Open challenge:** reliable analog-clock reading for current VLMs.
+GPT-4o mini and Claude Haiku essentially fail to read clock images (2.7% and 0.2%). Gemini reaches 26.9% — better but still far below its text performance. The finger-position text description improves comprehension but leaves high misreading rates (25–43% "other"). **Open challenge:** reliable analog-clock reading for current VLMs.
 
-### Finding 2 — Under-rounding
+### Finding 2 — Pragmatic rounding capacity revealed by minute-mark descriptions
 
-On off-round targets (8:26–8:34), models almost never choose to round to a canonical approximation, whereas humans do so frequently. Human-style rounding means saying "8:30" for a target of 8:28 — deliberately trading precision for simplicity. This is distinct from hedging language on an exact time (e.g., "around 8:30" when the target *is* 8:30).
+The minute-mark format eliminates comprehension ambiguity by stating the exact minute explicitly. With this input, two of three models show a clear, human-like pragmatic shift — more rounding in the casual neighbor context than in the formal police context.
 
-| Source | Police rounding | Neighbor rounding |
-|--------|:-:|:-:|
-| GPT-4o mini | 0.9% | 4.7% |
-| Claude Haiku 4.5 | 0.0% | 0.0% |
-| Gemini 2.5 Flash | 0.0% | 8.5% |
-| **Human baseline** | **23.5%** | **43.4%** |
+| Source | Police precise | Neighbor precise | Police rnd | Neighbor rnd | WD |
+|--------|:-:|:-:|:-:|:-:|:-:|
+| GPT-4o mini (mm) | 100.0% | 100.0% | 0.0% | 0.0% | 0.000 |
+| Claude Haiku 4.5 (mm) | 87.0% | 79.1% | 13.0% | 19.7% | 0.091 |
+| Gemini 2.5 Flash (mm) | 76.2% | 62.7% | 23.8% | 37.3% | 0.135 |
+| **Human baseline** | **62.3%** | **53.3%** | **32.9%** | **42.6%** | **0.097** |
 
-Models round at 5–25× lower rates than humans on off-round targets. Claude Haiku never rounds at all. Gemini is the closest to human-like: it does produce rounded responses in the neighbor context, though still far below the human rate. This under-rounding means models operate in a fundamentally different region of the precision-rounding space than humans do — they default to precision (or produce misreadings) where humans routinely choose approximation. **Open challenge:** models that use canonical approximations as a natural production strategy, not just as a fallback.
+WD = Wasserstein distance between police and neighbor distributions (3-way coding: 0=precise, 1=rounded, 2=other). Higher = more context-sensitive.
 
-### Finding 3 — Pragmatic shift
+**Claude Haiku 4.5** shifts correctly (police more precise than neighbor), with a WD (0.091) matching the human baseline (0.097). **Gemini 2.5 Flash** shows the strongest shift: neighbor rounding (37.3%) substantially exceeds police rounding (23.8%), and WD (0.135) exceeds the human baseline. **GPT-4o mini** becomes over-literal — it reports the exact minute 100% of the time in both contexts, eliminating rounding entirely regardless of context.
 
-Humans produce more precise time expressions in the formal police context than in the casual neighbor context. Do models replicate this shift? (Text task, n = 475.)
+**LLMs are demonstrably capable of context-sensitive pragmatic rounding.** The null and inverted results from the image and finger-position-text runs were artefacts of comprehension failure, not evidence of absent pragmatic sensitivity.
 
-"Δ cond" is the conditional shift — precise rate within responses that are either precise *or* rounded (i.e., excluding misreadings). This is the cleaner signal: it asks whether a model that *can* produce a time expression at all adjusts its precision level to context.
+### Finding 3 — Pragmatic shift with finger-position text (confounded baseline)
 
-| Source | Police precise | Neighbor precise | Δ precise | Δ cond | WD |
+For completeness, results with the finger-position `clock_description` format. These should be interpreted with caution given the high "other" rates. "Δ cond" = conditional shift (precise / (precise + rounded), excluding misreadings).
+
+| Source | Police precise | Neighbor precise | Δ marg | Δ cond | WD |
 |--------|:-:|:-:|:-:|:-:|:-:|
 | GPT-4o mini | 32.5% | 38.9% | −6.5% | −5.3% | 0.120 |
 | Claude Haiku 4.5 | 31.2% | 37.7% | −6.5% | −10.7% | 0.066 |
 | Gemini 2.5 Flash | 55.0% | 53.7% | +1.3% | +4.7% | 0.044 |
 | **Human baseline** | **62.3%** | **53.3%** | **+9.1%** | **+9.9%** | **0.097** |
 
-WD = Wasserstein distance between police and neighbor distributions (3-way coding: 0=precise, 1=rounded, 2=other). Higher = more context-sensitive.
+GPT-4o mini and Claude Haiku show an inverted shift; Gemini moves in the correct direction but at less than half the human magnitude. In light of the minute-mark results (Finding 2), these patterns are best understood as artefacts of description comprehension failures.
 
-GPT-4o mini and Claude Haiku show an **inverted** shift — they are *less* precise in the formal police context. Gemini moves in the right direction but at less than half the human magnitude. **Open challenge:** context-sensitive precision calibration at human magnitude.
+### Finding 4 — Off-round subset: finger-position text and minute-mark
 
-### Finding 4 — Off-round subset
+Restricting to unambiguous rounding targets (8:26–8:29, 8:31–8:34, n = 244) — the methodology of Mühlenbernd & Solt (2022). Δ cond = conditional precise shift (police − neighbor); p-value from one-tailed Mann-Whitney U (H₁: neighbor rounds more). The mm column uses `clock_description_minutemark`.
 
-Restricting to targets where rounding vs. precision is unambiguous (8:26–8:29, 8:31–8:34, n = 244) — the methodology of Mühlenbernd & Solt (2022) — the human rounding signal strengthens considerably. Δ cond = conditional precise shift (police − neighbor); p-value from one-tailed Mann-Whitney U (H₁: neighbor rounds more).
-
-| Source | Police prec/rnd | Neighbor prec/rnd | Δ cond | p |
+| Source | Police prec / rnd | Neighbor prec / rnd | Δ cond | p |
 |--------|:-:|:-:|:-:|:-:|
 | GPT-4o mini | 24.3% / 0.9% | 30.2% / 4.7% | +9.9% | 0.039 * |
+| GPT-4o mini (mm) | 100.0% / 0.0% | 100.0% / 0.0% | 0.0% | — |
 | Claude Haiku 4.5 | 21.7% / 0.0% | 26.4% / 0.0% | 0.0% | 1.000 |
+| Claude Haiku 4.5 (mm) | 100.0% / 0.0% | 98.4% / 0.0% | 0.0% | 1.000 |
 | Gemini 2.5 Flash | 51.3% / 0.0% | 50.4% / 8.5% | +14.5% | 0.001 *** |
-| **Human baseline** | **70.4% / 23.5%** | **51.2% / 43.4%** | **+20.9%** | **0.001 ***** |
+| Gemini 2.5 Flash (mm) | 52.2% / 47.8% | 52.7% / 47.3% | −0.5% | 0.534 |
+| **Human baseline** | **70.4% / 23.5%** | **51.2% / 43.4%** | **+20.9%** | **0.001 *****|
 
-Gemini replicates the human direction significantly (p = 0.001). GPT-4o mini shows a weak but significant effect (p = 0.039). Claude Haiku produces zero rounding responses on off-round targets in both contexts — it defaults to "other" (wrong or vague times), making pragmatic shift detection impossible.
+The off-round analysis qualifies Finding 2: the pragmatic shift visible in the full-dataset mm results does **not** come from context-sensitive rounding of off-round targets. Rather, it comes from approximator usage on canonical targets — models (especially Gemini and Claude) use hedges such as "around" or "half past" more often in the neighbor context when the target is a canonical time. This is context-sensitive precision calibration, but it is distinct from the off-round rounding behaviour measured in M&S 2022. Interestingly, Gemini does round off-round times heavily with mm (~48%), but context-insensitively. GPT-4o mini and Claude Haiku become maximally precise on off-round targets with mm, never rounding regardless of context.
 
 ---
 
@@ -300,8 +318,8 @@ this way?
 
 ## Caveats and Limitations
 
-- **Human baseline is image-only.** Participants saw clock images; they did not see textual descriptions. Comparisons between text-description LLM outputs and human productions are meaningful but involve a modality translation step that should be flagged in analyses.
-- **Description format is a benchmark design choice.** One canonical textual description format is fixed as part of the benchmark specification. Results may differ with alternative description strategies.
+- **Human experiment used clock images only.** Participants saw analog clock images as stimuli; there were no textual descriptions in the original experiment. Both `clock_description` columns were added specifically for LLM evaluation and are not part of the original experimental design.
+- **Two description formats are provided.** `clock_description` uses a finger-position format; `clock_description_minutemark` states the exact minute explicitly. Results differ between formats and should not be compared directly across them.
 - **Original stimulus wording.** The original M&S 2022 experiment used "the clock on the left" (referring to GUI layout). This dataset uses "the clock as given above," which is layout-agnostic but a minor deviation from the source wording.
 - **Gendered interlocutors.** The original stimuli used "He asks" for the police officer and "She asks" for the neighbor. These gender assignments are preserved here as faithful to the source experiment. Researchers should be aware of potential gender-stereotyping effects.
 - **Task 2 prompt is context-embedded.** The original follow-up task gave participants only the minimal prompt ("In your task, you knew that…"). This dataset's `prompt_motive` embeds the police/neighbor context so single-turn LLM evaluation has access to the pragmatic framing. This is a deliberate design choice for LLM eval; the source wording is preserved in the paper.

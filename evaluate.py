@@ -149,10 +149,10 @@ async def openai_task1_image(client, row: dict, model: str) -> str:
     ], model, max_tokens=40, **_no_thinking(model))
 
 
-async def openai_task1_text(client, row: dict, model: str) -> str:
+async def openai_task1_text(client, row: dict, model: str, desc_col: str = "clock_description") -> str:
     return await openai_call(client, [
         {"role": "system", "content": TASK1_SYSTEM},
-        {"role": "user", "content": row["clock_description"] + "\n\n" + row["prompt"]},
+        {"role": "user", "content": row[desc_col] + "\n\n" + row["prompt"]},
     ], model, max_tokens=40, **_no_thinking(model))
 
 
@@ -185,10 +185,10 @@ async def anthropic_task1_image(client, row: dict, model: str) -> str:
     ], model, max_tokens=40)
 
 
-async def anthropic_task1_text(client, row: dict, model: str) -> str:
+async def anthropic_task1_text(client, row: dict, model: str, desc_col: str = "clock_description") -> str:
     return await anthropic_call(
         client, TASK1_SYSTEM,
-        row["clock_description"] + "\n\n" + row["prompt"],
+        row[desc_col] + "\n\n" + row["prompt"],
         model, max_tokens=40,
     )
 
@@ -217,6 +217,21 @@ async def run_row(client, row: dict, model: str) -> tuple[str, str, str]:
         return await asyncio.gather(
             openai_task1_image(client, row, model),
             openai_task1_text(client, row, model),
+            openai_task2(client, row, model),
+        )
+
+
+async def run_row_mm(client, row: dict, model: str) -> tuple[str, str]:
+    """Run task1_text with minute-mark descriptions and task2; return (txt_mm, t2_mm)."""
+    desc_col = "clock_description_minutemark"
+    if is_anthropic(model):
+        return await asyncio.gather(
+            anthropic_task1_text(client, row, model, desc_col),
+            anthropic_task2(client, row, model),
+        )
+    else:
+        return await asyncio.gather(
+            openai_task1_text(client, row, model, desc_col),
             openai_task2(client, row, model),
         )
 
@@ -267,24 +282,36 @@ def sample_one_per_condition(ds) -> list[int]:
 # Summary
 # ---------------------------------------------------------------------------
 
-def summarise(results_df: pd.DataFrame, full_df: pd.DataFrame, model: str, out_path: Path) -> None:
-    col     = col_prefix(model)
-    t1_img  = f"{col}_task1_image"
-    t1_txt  = f"{col}_task1_text"
-    t2_col  = f"{col}_task2"
+def summarise(results_df: pd.DataFrame, full_df: pd.DataFrame, model: str, out_path: Path, minutemark: bool = False) -> None:
+    col = col_prefix(model)
 
     print("\n" + "=" * 70)
-    print(f"RESULTS SUMMARY   model={model}   rows={len(results_df)}")
+    suffix = "  [minute-mark descriptions]" if minutemark else ""
+    print(f"RESULTS SUMMARY   model={model}   rows={len(results_df)}{suffix}")
     print("=" * 70)
 
-    print("\n--- Task 1: image vs text-description ---")
-    for _, r in results_df.iterrows():
-        print(
-            f"  [{r['context']:8s}] {r['target_time']:8s}"
-            f" | human: {str(r['human_production']):28s}"
-            f" | img: {str(r[t1_img]):22s}"
-            f" | txt: {str(r[t1_txt])}"
-        )
+    if minutemark:
+        t1_txt = f"{col}_task1_text_mm"
+        t2_col = f"{col}_task2_mm"
+        print("\n--- Task 1: text (minute-mark) ---")
+        for _, r in results_df.iterrows():
+            print(
+                f"  [{r['context']:8s}] {r['target_time']:8s}"
+                f" | human: {str(r['human_production']):28s}"
+                f" | txt_mm: {str(r[t1_txt])}"
+            )
+    else:
+        t1_img  = f"{col}_task1_image"
+        t1_txt  = f"{col}_task1_text"
+        t2_col  = f"{col}_task2"
+        print("\n--- Task 1: image vs text-description ---")
+        for _, r in results_df.iterrows():
+            print(
+                f"  [{r['context']:8s}] {r['target_time']:8s}"
+                f" | human: {str(r['human_production']):28s}"
+                f" | img: {str(r[t1_img]):22s}"
+                f" | txt: {str(r[t1_txt])}"
+            )
 
     print("\n--- Task 2: first 3 model motive responses ---")
     for _, r in results_df.head(3).iterrows():
@@ -331,7 +358,8 @@ async def async_main(args) -> None:
     else:
         eval_indices = sample_one_per_condition(ds)
         mode = f"sample ({len(eval_indices)} rows, 1 per condition)"
-    print(f"Mode   : {mode}   |   {3 * len(eval_indices)} API calls (max 20 rows concurrent)\n")
+    n_calls_per_row = 2 if args.minutemark else 3
+    print(f"Mode   : {mode}   |   {n_calls_per_row * len(eval_indices)} API calls (max 10 rows concurrent)\n")
 
     sem = asyncio.Semaphore(10)  # cap at 10 rows (= 30 API calls) in flight at once
 
@@ -341,10 +369,7 @@ async def async_main(args) -> None:
             ctx    = context_names[row["context"]]
             stim   = stimulus_names[row["stimulus_type"]]
             labels = [motive_names[i] for i in row["motive_labels"]]
-            r_img, r_txt, r_t2 = await run_row(client, row, model)
-            print(f"  [{n:3d}/{len(eval_indices)}] {row['target_time']:8s} / {ctx:8s}"
-                  f"  img={r_img!r:24s}  txt={r_txt!r:24s}  t2={str(r_t2)[:40]!r}")
-            return {
+            base = {
                 "item_id":               row["item_id"],
                 "target_time":           row["target_time"],
                 "context":               ctx,
@@ -354,10 +379,17 @@ async def async_main(args) -> None:
                 "human_production_code": row["production_code"],
                 "human_motive_labels":   "|".join(labels),
                 "human_motive_text":     row["motive_text"],
-                f"{col}_task1_image":    r_img,
-                f"{col}_task1_text":     r_txt,
-                f"{col}_task2":          r_t2,
             }
+            if args.minutemark:
+                r_txt_mm, r_t2_mm = await run_row_mm(client, row, model)
+                print(f"  [{n:3d}/{len(eval_indices)}] {row['target_time']:8s} / {ctx:8s}"
+                      f"  txt_mm={r_txt_mm!r:28s}  t2={str(r_t2_mm)[:40]!r}")
+                return {**base, f"{col}_task1_text_mm": r_txt_mm, f"{col}_task2_mm": r_t2_mm}
+            else:
+                r_img, r_txt, r_t2 = await run_row(client, row, model)
+                print(f"  [{n:3d}/{len(eval_indices)}] {row['target_time']:8s} / {ctx:8s}"
+                      f"  img={r_img!r:24s}  txt={r_txt!r:24s}  t2={str(r_t2)[:40]!r}")
+                return {**base, f"{col}_task1_image": r_img, f"{col}_task1_text": r_txt, f"{col}_task2": r_t2}
 
     tasks   = [process(n, idx) for n, idx in enumerate(eval_indices, 1)]
     records = await asyncio.gather(*tasks)
@@ -370,7 +402,11 @@ async def async_main(args) -> None:
         existing = pd.read_csv(args.out)
         existing["item_id"]   = existing["item_id"].astype(str)
         results_df["item_id"] = results_df["item_id"].astype(str)
-        existing = existing.drop(columns=[c for c in existing.columns if c.startswith(col)], errors="ignore")
+        if args.minutemark:
+            mm_drop = {f"{col}_task1_text_mm", f"{col}_task2_mm"}
+            existing = existing.drop(columns=[c for c in existing.columns if c in mm_drop], errors="ignore")
+        else:
+            existing = existing.drop(columns=[c for c in existing.columns if c.startswith(col)], errors="ignore")
         results_df = (
             results_df.set_index("item_id")
             .combine_first(existing.set_index("item_id"))
@@ -378,7 +414,7 @@ async def async_main(args) -> None:
         )
 
     results_df.to_csv(args.out, index=False)
-    summarise(results_df, full_df, model, args.out)
+    summarise(results_df, full_df, model, args.out, minutemark=args.minutemark)
 
 
 def main() -> None:
@@ -388,6 +424,8 @@ def main() -> None:
     parser.add_argument("--rows", type=int, default=None, help="Evaluate first N rows.")
     parser.add_argument("--full", action="store_true", help="Evaluate all 475 rows.")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="Output CSV path.")
+    parser.add_argument("--minutemark", action="store_true",
+                        help="Use clock_description_minutemark for text task; saves *_task1_text_mm and *_task2_mm columns.")
     args = parser.parse_args()
     asyncio.run(async_main(args))
 

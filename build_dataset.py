@@ -48,6 +48,21 @@ CLOCK_DESCRIPTIONS = {
     ),
 }
 
+CLOCK_DESCRIPTIONS_MINUTEMARK = {
+    "8:25":       "Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 25-minute mark.",
+    "8:26":       "Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 26-minute mark.",
+    "8:27":       "Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 27-minute mark.",
+    "8:28":       "Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 28-minute mark.",
+    "8:29":       "Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 29-minute mark.",
+    "8:30":       "Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 30-minute mark.",
+    "8:31":       "Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 31-minute mark.",
+    "8:32":       "Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 32-minute mark.",
+    "8:33":       "Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 33-minute mark.",
+    "8:34":       "Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 34-minute mark.",
+    "8:35":       "Clock description: Hour hand somewhere between 8 and 9. Minute hand at the 35-minute mark.",
+    RANGE_TARGET: "Clock description: Hour hand somewhere between 8 and 9. Instead of a minute hand, a shaded region covers the area from the 26-minute mark to the 34-minute mark.",
+}
+
 CLOCK_IMAGE_FILES = {
     "8:25": IMAGES_DIR / "clock825.png",
     "8:26": IMAGES_DIR / "clock826.png",
@@ -233,8 +248,9 @@ def main() -> Dataset:
             "approximator":      normalize_appx(src["appxC"]),
             "motive_labels":     motives,
             "motive_text":       motive_text,
-            "clock_image":       str(CLOCK_IMAGE_FILES[state_info["target_time"]]),
-            "clock_description": CLOCK_DESCRIPTIONS[state_info["target_time"]],
+            "clock_image":                    str(CLOCK_IMAGE_FILES[state_info["target_time"]]),
+            "clock_description":              CLOCK_DESCRIPTIONS[state_info["target_time"]],
+            "clock_description_minutemark":   CLOCK_DESCRIPTIONS_MINUTEMARK[state_info["target_time"]],
             "prompt":            build_prompt(src["context"], state_info["stimulus_type"]),
             "prompt_motive":     build_prompt_motive(
                 src["context"],
@@ -257,9 +273,10 @@ def main() -> Dataset:
         "approximator":      ClassLabel(names=APPROXIMATOR_CLASSES),
         "motive_labels":     Sequence(ClassLabel(names=MOTIVE_CLASSES)),
         "motive_text":       Value("string"),
-        "clock_image":       Image(),
-        "clock_description": Value("string"),
-        "prompt":            Value("string"),
+        "clock_image":                    Image(),
+        "clock_description":              Value("string"),
+        "clock_description_minutemark":   Value("string"),
+        "prompt":                         Value("string"),
         "prompt_motive":     Value("string"),
     })
 
